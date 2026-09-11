@@ -4,6 +4,7 @@ import time
 import logging
 import httpx
 from ..config import config
+from ..platform_usage import record_platform_usage
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +234,17 @@ class MCPClient:
                 }
 
         result = data.get("result", {})
+
+        # The platform's OWN model spend for this call (neo-platform#1164). It is not
+        # derivable on this side: resolve_context runs the platform's LLM in another
+        # process, so without this section the turn's reported cost is agent-only and
+        # reads as cheaper than it is. Absent on a gateway predating that change and on
+        # a cache-served turn that ran no LLM — both are recorded as "nothing reported"
+        # rather than zero. See app/platform_usage.py.
+        if isinstance(result, dict):
+            structured = result.get("structuredContent")
+            if isinstance(structured, dict):
+                record_platform_usage(structured.get("token_usage"))
 
         return {
             "tool": tool_name,

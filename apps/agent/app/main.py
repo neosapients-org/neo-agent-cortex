@@ -97,6 +97,7 @@ except ImportError:
 
 from app.config import config
 from app.llm import get_turn_usage, reset_turn_usage
+from app.platform_usage import get_platform_usage, reset_platform_usage
 from app.graph.graph_v2 import agent_graph
 from app.graph.nodes import stream_channel as _stream
 from app.graph.nodes.memory import memory_manager
@@ -383,6 +384,10 @@ async def run_agent_stream(message: str, user_id: str, investor_name: str | None
     # these back on the `usage` event below; without the reset a turn would inherit the
     # previous turn's totals and every cost shown would drift upward.
     reset_turn_usage()
+    # Same, for the platform's own spend reported back through MCP. Separate counter
+    # because it is a separate account: this is what Cortex burnt resolving the data,
+    # not what this agent burnt talking to the model.
+    reset_platform_usage()
 
     span_ctx = turn(
         "agent.turn",
@@ -572,6 +577,15 @@ async def run_agent_stream(message: str, user_id: str, investor_name: str | None
             _usage["model"] = os.getenv("LLM_MODEL") or ""
             _usage["ttft_ms"] = first_token_ms
             _usage["total_ms"] = round((time.perf_counter() - start_time) * 1000)
+            # The platform's spend for the same turn, passed through as the gateway
+            # reported it (neo-platform#1164). Unlike the agent's own tokens above, the
+            # COST is included rather than left to the UI to derive, because the UI
+            # cannot: it does not know which models the platform's phases ran, and the
+            # gateway already priced each. Omitted entirely — not zeroed — when the platform
+            # reported nothing, so the UI can tell "no LLM call" from "a free one".
+            _platform = get_platform_usage()
+            if _platform is not None:
+                _usage["platform"] = _platform
             yield f"event: usage\ndata: {json.dumps(_usage)}\n\n"
 
             yield f"event: done\ndata: {json.dumps({'message_id': message_id})}\n\n"
